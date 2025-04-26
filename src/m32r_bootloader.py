@@ -1,7 +1,10 @@
 import serial
 import struct
 import time
+import argparse
+import sys
 from enum import Enum
+from tqdm import tqdm
 
 def fmthex(contents):
     return ' '.join(f'{x:02x}' for x in contents)
@@ -23,56 +26,39 @@ unlock_command = [0xf5, 0x84, 0x0, 0x0, 0xc, 0x53, 0x55, 0x45, 0x46, 0x49, 0x4d,
 erase_command = [0xA7, 0xD0]
 
 class BootloaderComm:
-    def __init__(self, fakefile):
+    def __init__(self):
         self.communication_open = False
         self.port = serial.Serial('/dev/tty.usbserial-A50285BI',
                                     57600,
                                     timeout=1,
                                     parity=serial.PARITY_NONE,
                                     stopbits=1)
-        with open(fakefile, "rb") as f:
-            self.flash = f.read()
-    
-    def f_read_page_contents(self, addr):
-        addr_high_bytes = int(addr / 0x100)
-        command = struct.pack('<BH', CommandIdentifier.READ_PAGE.value, addr_high_bytes)
-        print(f"Read page contents command: {fmthex(command)}")
-        return self.flash[addr:addr+256]
-    
-    def f_read_page_checksum(self, addr):
-        addr_high_bytes = int(addr / 0x100)
-        command = struct.pack('<BHH', CommandIdentifier.READ_CHECKSUM.value, addr_high_bytes, addr_high_bytes)
-        print(f"Read page checksum command: {fmthex(command)}")
-        checksum_iter = struct.iter_unpack('>H', self.flash[addr:addr+256])
-        checksum = sum([i[0] for i in checksum_iter]) % 65536
-        print(f'Checksum {hex(checksum)}')
-        return checksum
-
+        
     def read_page_contents(self, addr):
-        addr_high_bytes = addr / 0x100
+        addr_high_bytes = int(addr / 0x100)
         command = struct.pack('<BH', CommandIdentifier.READ_PAGE.value, addr_high_bytes)
-        print(f"Read page contents command: {fmthex(command)}")
+        #print(f"Read page contents command: {fmthex(command)}")
         self.port.write(command)
         rx = self.port.read(256)
         return rx
 
     def read_page_checksum(self, addr):
-        addr_high_bytes = addr / 0x100
+        addr_high_bytes = int(addr / 0x100)
         command = struct.pack('<BHH', CommandIdentifier.READ_CHECKSUM.value, addr_high_bytes, addr_high_bytes)
-        print(f"Read page checksum command: {fmthex(command)}")
+        #print(f"Read page checksum command: {fmthex(command)}")
         self.port.write(command)
         rx = self.port.read(2)
         checksum = struct.unpack('<H', rx)
-        return checksum
+        return checksum[0]
     
     def write_page_contents(self, addr, data: bytes):
         assert len(data) == 0x100, "Wrong data payload length"
-        addr_high_bytes = addr / 0x100
+        addr_high_bytes = int(addr / 0x100)
         message = bytearray()
         command = struct.pack('<BH', CommandIdentifier.WRITE_PAGE.value, addr_high_bytes)
         message.extend(command)
         message.extend(data)
-        print(f"Write page contents command: {fmthex(message)}")
+        #print(f"Write page contents command: {fmthex(message)}")
         self.port.write(message)
         status = self.port.read(1)
         if BootloaderResponse.ACK.value in status:
@@ -87,7 +73,7 @@ class BootloaderComm:
         else:
             return False
     
-    def get_status(self) -> int:
+    def get_status(self) -> bytes:
         self.port.write(bytes([CommandIdentifier.GET_STATUS.value]))
         rx = self.port.read(2)
         return rx
@@ -101,9 +87,10 @@ class BootloaderComm:
             return self.port.read(rx_queue_len)
         return 'N/A'
     
-    def open(self):
+    def init(self):
         self.port.reset_input_buffer()
-        for i in range(20):
+        # init starts by sending 18 null bytes to sync baudrate
+        for i in range(18):
             self.port.write(b'\x00')
             time.sleep(0.04)
             rx_queue_len = self.port.in_waiting
@@ -129,6 +116,7 @@ class BootloaderComm:
             return False
         rx = self.port.read(rx_queue_len)
         if 0x8C in rx:
+            print("Unlock OK!")
             return True
         return False
     
@@ -146,29 +134,35 @@ class BootloaderComm:
         return False
     
     def write_ecu(self, data: bytes):
+        print("Writing ECU memory...")
         assert len(data) == 0x100000, "ECU image wrong size"
         status = self.get_status()
-        if not BootloaderResponse.ACK.value in status:
+        if not 0x8C in status:
             print("Bootloader status incorrect")
             return False
+        print("Status OK")
         if not self.clear_status():
             print("Clear bootloader status fail")
             return False
+        print("Performing full erase...")
         if not self.erase_all():
             print("Erase fail")
             return False
+        print("Erased")
 
         page_size = 256
         page_count_per_block = 256
         block_count = 16
         total_page_count = block_count * page_count_per_block
 
-        for page in range(total_page_count):
+        for page in tqdm(range(total_page_count), desc="Writing flash", unit="page"):
             address = page * page_size
             status = self.write_page_contents(address, data[address:address+256])
-            if status == False:
+            if status is False:
                 print(f"Error in writing page {page} at addr {address}")
-
+                print("Write aborted, reset ECU and try again.")
+                return False
+        return True
 
     def read_ecu(self):
         read_contents = bytearray() # complete flash contents here
@@ -177,20 +171,59 @@ class BootloaderComm:
         block_count = 16
         total_page_count = block_count * page_count_per_block
 
-        for page in range(total_page_count):
+        for page in tqdm(range(total_page_count), desc="Reading flash", unit="page"):
             address = page * page_size
-            checksum = self.f_read_page_checksum(address)
-            contents = self.f_read_page_contents(address)
-            sum_iter = struct.iter_unpack('>H', contents)
-            checksum_calc = sum([i[0] for i in sum_iter]) % 65536
-            if checksum == checksum_calc:
-                print("Read OK")
-                read_contents.extend(contents)
-            else:
-                print("Read fail")
-                print(checksum_calc)
-                read_contents = []
+            
+            for i in range(10): # max retries
+                checksum = self.read_page_checksum(address)
+                contents = self.read_page_contents(address)
+                sum_iter = struct.iter_unpack('>H', contents)
+                expected_checksum = sum([i[0] for i in sum_iter]) % 65536
+                if checksum == expected_checksum:
+                    #print("Read OK")
+                    read_contents.extend(contents)
+                    break
+                else:
+                    if i >= 9:
+                        print("Read aborted, reset ECU and try again.")
+                        return []
+                    print(f"Read fail (checksum mismatch {expected_checksum} and {checksum}), trying again.")
+                    print(expected_checksum)
         return read_contents
 
-
-
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="M32R factory bootloader communication tool to read or write the ECU flash contents"
+    )
+    parser.add_argument(
+        "mode",
+        choices=["read", "write"],
+        help="Mode of operation: 'read' to read ECU contents to a file, 'write' to flash ECU from a file."
+    )
+    parser.add_argument(
+        "file_path",
+        help="Path to the file. In 'read' mode, ECU contents will be saved to this file. In 'write' mode, ECU will be flashed with this file's contents."
+    )
+    
+    args = parser.parse_args()
+    
+    comm = BootloaderComm('zr374_stock.bin')
+    comm.init()
+    comm.unlock()
+    if args.mode == "read":
+        contents = comm.read_ecu()
+        if len(contents) > 0:
+            with open(args.file_path, "wb") as f:
+                f.write(contents)
+            print("Read successful.")
+        else:
+            print("Read failed.")
+        
+    elif args.mode == "write":
+        with open(args.file_path, "rb") as f:
+            data = f.read()
+        if comm.write_ecu(data):
+            print("Write successful.")
+    else:
+        print(f"Unknown mode: {args.mode}")
+        sys.exit(1)
