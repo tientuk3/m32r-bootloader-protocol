@@ -26,9 +26,9 @@ unlock_command = [0xf5, 0x84, 0x0, 0x0, 0xc, 0x53, 0x55, 0x45, 0x46, 0x49, 0x4d,
 erase_command = [0xA7, 0xD0]
 
 class BootloaderComm:
-    def __init__(self):
+    def __init__(self, port):
         self.communication_open = False
-        self.port = serial.Serial('/dev/tty.usbserial-A50285BI',
+        self.port = serial.Serial(port,
                                     57600,
                                     timeout=1,
                                     parity=serial.PARITY_NONE,
@@ -204,10 +204,15 @@ if __name__ == "__main__":
         "file_path",
         help="Path to the file. In 'read' mode, ECU contents will be saved to this file. In 'write' mode, ECU will be flashed with this file's contents."
     )
+    parser.add_argument(
+        "-p", "--port",
+        help="Port name of the UART adapter, e.g. /dev/tty... in Unix systems",
+        required=True
+    )
     
     args = parser.parse_args()
     
-    comm = BootloaderComm('zr374_stock.bin')
+    comm = BootloaderComm(args.port)
     comm.init()
     comm.unlock()
     if args.mode == "read":
