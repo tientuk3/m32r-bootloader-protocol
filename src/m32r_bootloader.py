@@ -1,11 +1,13 @@
-import serial
-import struct
-import time
 import argparse
-import sys
 import logging
+import struct
+import sys
+import time
 from enum import Enum
+
+import serial
 from tqdm import tqdm
+
 
 def fmthex(contents):
     return ' '.join(f'{x:02x}' for x in contents)
