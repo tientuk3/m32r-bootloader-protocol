@@ -85,9 +85,9 @@ class FakeBootloaderPort():
         return bytes([])
 
 def test_read_ecu(mocker):
-    mock_serial_class = mocker.patch('m32r_bootloader.serial.Serial', return_value=FakeBootloaderPort())
+    mocker.patch('m32r_bootloader.serial.Serial', return_value=FakeBootloaderPort())
     
-    comm = BootloaderComm()
+    comm = BootloaderComm("dummy_port")
     comm.init()
     comm.unlock()
     contents = comm.read_ecu()
@@ -98,9 +98,9 @@ def test_read_ecu(mocker):
     assert contents == expected_contents
     
 def test_write_ecu(mocker):
-    mock_serial_class = mocker.patch('m32r_bootloader.serial.Serial', return_value=FakeBootloaderPort())
+    mocker.patch('m32r_bootloader.serial.Serial', return_value=FakeBootloaderPort())
     
-    comm = BootloaderComm()
+    comm = BootloaderComm("dummy_port")
     comm.init()
     comm.unlock()
     

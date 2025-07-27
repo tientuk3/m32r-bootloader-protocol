@@ -157,11 +157,17 @@ class BootloaderComm:
 
         for page in tqdm(range(total_page_count), desc="Writing flash", unit="page"):
             address = page * page_size
-            status = self.write_page_contents(address, data[address:address+256])
-            if status is False:
-                print(f"Error in writing page {page} at addr {address}")
-                print("Write aborted, reset ECU and try again.")
-                return False
+            
+            for i in range(10): # max retries
+                status = self.write_page_contents(address, data[address:address+256])
+                if status is True:
+                    break
+                else:
+                    if i >= 9:
+                        print(f"Error in writing page {page} at addr {address}")
+                        print("Write aborted, reset ECU and try again.")
+                        return False
+                    print("Write fail, trying again.")
         return True
 
     def read_ecu(self):
@@ -188,7 +194,6 @@ class BootloaderComm:
                         print("Read aborted, reset ECU and try again.")
                         return []
                     print(f"Read fail (checksum mismatch {expected_checksum} and {checksum}), trying again.")
-                    print(expected_checksum)
         return read_contents
 
 if __name__ == "__main__":
