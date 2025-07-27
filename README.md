@@ -10,13 +10,14 @@ Install environment
 
 Command line use
 
-`python m32r_bootloader.py {read|write} <filename> --port <serial port name>`
+`python m32r_bootloader.py {read|write} <filename> --port <serial port name> [--verbose]`
 
 | Argument         | Description                                                                 |
 |------------------|-----------------------------------------------------------------------------|
 | `{read,write}`   | Mode: 'read' to read ECU contents to a file, 'write' to flash ECU from a file.      |
 | `filename`     | Path to the file where read contents will be placed (in read mode) or which is flashed to the ECU (in write mode)             |
 | `-p, --port`     | Port name of the UART adapter, e.g. /dev/tty... in Unix systems         |
+| `-v, --verbose`     | Enable verbose logging output        |
 
 ### Run tests
 
