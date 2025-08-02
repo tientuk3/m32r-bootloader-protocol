@@ -1,13 +1,31 @@
 import argparse
 import logging
+import platform
 import struct
+import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from enum import Enum
 
 import serial
 from tqdm import tqdm
 
+@contextmanager
+def prevent_sleep(): # to prevent sleep messing up the serial port, on macOS only
+    caffeinate_process = None
+    try:
+        if platform.system() == "Darwin":
+            caffeinate_process = subprocess.Popen(
+                ["caffeinate", "-di"], # prevent display sleep and idle sleep
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+        yield
+    finally:
+        if caffeinate_process:
+            caffeinate_process.terminate()
+            caffeinate_process.wait()
 
 def fmthex(contents):
     return " ".join(f"{x:02x}" for x in contents)
@@ -280,7 +298,8 @@ if __name__ == "__main__":
         sys.exit(1)
     logger.debug("Communication with ECU initialized.")
     if args.mode == "read":
-        contents = comm.read_ecu()
+        with prevent_sleep():
+            contents = comm.read_ecu()
         if len(contents) > 0:
             with open(args.file_path, "wb") as f:
                 f.write(contents)
@@ -291,10 +310,11 @@ if __name__ == "__main__":
     elif args.mode == "write":
         with open(args.file_path, "rb") as f:
             data = f.read()
-        if comm.write_ecu(data):
-            logger.info("Write successful.")
-        else:
-            logger.error("Write failed.")
+        with prevent_sleep():
+            if comm.write_ecu(data):
+                logger.info("Write successful.")
+            else:
+                logger.error("Write failed.")
     else:
         logger.error(f"Unknown mode: {args.mode}")
         sys.exit(1)
