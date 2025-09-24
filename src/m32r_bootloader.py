@@ -72,6 +72,7 @@ class BootloaderComm:
     def __init__(self, port):
         self.communication_open = False
         self.logger = logging.getLogger(__name__)
+        self.logger.debug(f"Opening serial port on {port}")
         self.port = serial.Serial(
             port, 57600, timeout=1, parity=serial.PARITY_NONE, stopbits=1
         )
@@ -129,6 +130,14 @@ class BootloaderComm:
         rx = self.port.read(2)
         self.logger.debug(f"GET_STATUS returned: {fmthex(rx)}")
         return rx
+    
+    def is_unlocked(self) -> bool:
+        status = self.get_status()
+        if len(status) != 2:
+            return False
+        srd, srd1 = status
+        del srd
+        return ((srd1 & 0xC) == 0xC)
 
     def get_version(self) -> str:
         self.port.reset_input_buffer()
@@ -154,13 +163,12 @@ class BootloaderComm:
             self.logger.debug("ACK response to handshake")
             self.communication_open = True
             return True
-        self.logger.error("No response from ECU")
+        self.logger.error("No init response from ECU")
         return False
 
     def unlock(self):
-        status = self.get_status()
-        if 0x8C in status:
-            self.logger.debug("ECU already unlocked.")
+        if self.is_unlocked():
+            self.logger.info("ECU already unlocked.")
             return True
         self.port.write(unlock_command)
         time.sleep(0.1)
@@ -169,9 +177,13 @@ class BootloaderComm:
             self.logger.error("No response to unlock command.")
             return False
         rx = self.port.read(rx_queue_len)
-        if 0x8C in rx:
-            self.logger.debug("Unlock OK!")
-            return True
+        if BootloaderResponse.ACK.value in rx:
+            self.logger.debug("ACK response to unlock command!")
+            if self.is_unlocked():
+                self.logger.debug("Unlock OK!")
+                return True
+            self.logger.error("ECU status indicates locked!")
+            return False
         self.logger.error("Unlock command not accepted by ECU.")
         return False
 
@@ -191,8 +203,7 @@ class BootloaderComm:
     def write_ecu(self, data: bytes):
         self.logger.info("Writing ECU memory...")
         assert len(data) == 0x100000, "ECU image wrong size"
-        status = self.get_status()
-        if not 0x8C in status:
+        if not self.is_unlocked():
             self.logger.error("Bootloader status incorrect")
             return False
         self.logger.debug("Status OK")
